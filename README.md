@@ -422,4 +422,403 @@ alerts/
       ├── active
       ├── createdAt
 
+alerts/
+  └── alertId
+      ├── userId
+      ├── coin
+      ├── type            // "price" OR "percent"
+      ├── targetPrice     // for price alerts
+      ├── percentChange   // for smart alerts (e.g. 5)
+      ├── basePrice       // price when alert was created
+      ├── direction       // "up", "down", or "both"
+      ├── active
+      ├── createdAt
+<select id="alertType">
+  <option value="price">Price Alert</option>
+  <option value="percent">Percent Change Alert</option>
+</select>
+
+<input type="number" id="percent" placeholder="Percent change (e.g. 5)">
+<select id="direction">
+  <option value="both">Up or Down</option>
+  <option value="up">Up Only</option>
+  <option value="down">Down Only</option>
+</select>
+async function saveSmartAlert(coin, percent, direction) {
+  const user = auth.currentUser;
+  if (!user) return;
+
+  // Get current price to use as baseline
+  const priceRes = await fetch(
+    `https://api.coingecko.com/api/v3/simple/price?ids=${coin}&vs_currencies=usd`
+  );
+  const priceData = await priceRes.json();
+  const basePrice = priceData[coin].usd;
+
+  await db.collection("alerts").add({
+    userId: user.uid,
+    coin,
+    type: "percent",
+    percentChange: percent,
+    direction,
+    basePrice,
+    active: true,
+    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+  });
+
+  document.getElementById("status").textContent =
+    `Smart alert set for ${coin.toUpperCase()} (${percent}%)`;
+}
+async function checkSmartAlerts() {
+  const user = auth.currentUser;
+  if (!user) return;
+
+  const snapshot = await db
+    .collection("alerts")
+    .where("userId", "==", user.uid)
+    .where("active", "==", true)
+    .where("type", "==", "percent")
+    .get();
+
+  for (const doc of snapshot.docs) {
+    const alert = doc.data();
+
+    const res = await fetch(
+      `https://api.coingecko.com/api/v3/simple/price?ids=${alert.coin}&vs_currencies=usd`
+    );
+    const data = await res.json();
+    const currentPrice = data[alert.coin].usd;
+
+    const percentMove =
+      ((currentPrice - alert.basePrice) / alert.basePrice) * 100;
+
+    const hitUp =
+      percentMove >= alert.percentChange && alert.direction !== "down";
+
+    const hitDown =
+      percentMove <= -alert.percentChange && alert.direction !== "up";
+
+    if (hitUp || hitDown) {
+      triggerSmartAlert(doc.id, alert.coin, percentMove, currentPrice);
+    }
+  }
+}
+async function triggerSmartAlert(alertId, coin, percentMove, price) {
+  await db.collection("alerts").doc(alertId).update({
+    active: false,
+    triggeredAt: firebase.firestore.FieldValue.serverTimestamp()
+  });
+
+  const message =
+    `${coin.toUpperCase()} moved ${percentMove.toFixed(2)}% to $${price}`;
+
+  if (Notification.permission === "granted") {
+    new Notification("🚨 Smart Crypto Alert", { body: message });
+  } else {
+    alert(message);
+  }
+}
+setInterval(checkSmartAlerts, 60000); // every 60 seconds
+watchlists/
+  └── docId
+      ├── userId
+      ├── coin
+      ├── addedAt
+async function addToWatchlist(coin) {
+  const user = auth.currentUser;
+  if (!user) return;
+
+  await db.collection("watchlists").add({
+    userId: user.uid,
+    coin,
+    addedAt: firebase.firestore.FieldValue.serverTimestamp()
+  });
+
+  alert(`${coin.toUpperCase()} added to watchlist ⭐`);
+}
+async function loadWatchlist() {
+  const user = auth.currentUser;
+  if (!user) return;
+
+  const snapshot = await db
+    .collection("watchlists")
+    .where("userId", "==", user.uid)
+    .get();
+
+  const coins = snapshot.docs.map(doc => doc.data().coin);
+  loadWatchlistAnalytics(coins);
+}
+async function loadWatchlistAnalytics(coins) {
+  if (coins.length === 0) return;
+
+  const url = `https://api.coingecko.com/api/v3/simple/price?ids=${coins.join(",")}&vs_currencies=usd&include_24hr_change=true`;
+  const res = await fetch(url);
+  const data = await res.json();
+
+  const container = document.getElementById("watchlist");
+  container.innerHTML = "";
+
+  coins.forEach(coin => {
+    const price = data[coin].usd;
+    const change = data[coin].usd_24h_change.toFixed(2);
+    const cls = change >= 0 ? "positive" : "negative";
+
+    container.innerHTML += `
+      <div class="card">
+        <h3>${coin.toUpperCase()}</h3>
+        <p>$${price}</p>
+        <p class="${cls}">${change}% (24h)</p>
+      </div>
+    `;
+  });
+}
+<h2>⭐ Watchlist</h2>
+<div id="watchlist"></div>
+async function dailySummary() {
+  const user = auth.currentUser;
+  if (!user) return;
+
+  const snapshot = await db
+    .collection("watchlists")
+    .where("userId", "==", user.uid)
+    .get();
+
+  if (snapshot.empty) return;
+
+  const coins = snapshot.docs.map(doc => doc.data().coin);
+
+  const url = `https://api.coingecko.com/api/v3/simple/price?ids=${coins.join(",")}&vs_currencies=usd&include_24hr_change=true`;
+  const res = await fetch(url);
+  const data = await res.json();
+
+  let topGainer = null;
+  let biggestDrop = null;
+
+  coins.forEach(coin => {
+    const change = data[coin].usd_24h_change;
+
+    if (!topGainer || change > topGainer.change)
+      topGainer = { coin, change };
+
+    if (!biggestDrop || change < biggestDrop.change)
+      biggestDrop = { coin, change };
+  });
+
+  sendDailyNotification(topGainer, biggestDrop);
+}
+function sendDailyNotification(top, drop) {
+  const message =
+    `📊 Daily Crypto Summary\n` +
+    `🚀 Top Gainer: ${top.coin.toUpperCase()} (${top.change.toFixed(2)}%)\n` +
+    `📉 Biggest Drop: ${drop.coin.toUpperCase()} (${drop.change.toFixed(2)}%)`;
+
+  if (Notification.permission === "granted") {
+    new Notification("Daily Crypto Summary", { body: message });
+  }
+}
+const lastRun = localStorage.getItem("lastSummary");
+
+if (!lastRun || Date.now() - lastRun > 86400000) {
+  dailySummary();
+  localStorage.setItem("lastSummary", Date.now());
+}
+portfolios/
+  └── docId
+      ├── userId
+      ├── coin
+      ├── amount        // e.g. 0.25 BTC
+      ├── addedAt
+async function addHolding(coin, amount) {
+  const user = auth.currentUser;
+  if (!user) return;
+
+  await db.collection("portfolios").add({
+    userId: user.uid,
+    coin,
+    amount: Number(amount),
+    addedAt: firebase.firestore.FieldValue.serverTimestamp()
+  });
+
+  alert("Holding added to portfolio 📊");
+}
+async function loadPortfolio() {
+  const user = auth.currentUser;
+  if (!user) return;
+
+  const snapshot = await db
+    .collection("portfolios")
+    .where("userId", "==", user.uid)
+    .get();
+
+  const holdings = snapshot.docs.map(doc => doc.data());
+  calculatePortfolioValue(holdings);
+}
+async function calculatePortfolioValue(holdings) {
+  const coins = holdings.map(h => h.coin);
+
+  const url = `https://api.coingecko.com/api/v3/simple/price?ids=${coins.join(",")}&vs_currencies=usd&include_24hr_change=true`;
+  const res = await fetch(url);
+  const prices = await res.json();
+
+  let totalValue = 0;
+  const container = document.getElementById("portfolio");
+  container.innerHTML = "";
+
+  holdings.forEach(h => {
+    const price = prices[h.coin].usd;
+    const value = price * h.amount;
+    totalValue += value;
+
+    container.innerHTML += `
+      <div class="card">
+        <h3>${h.coin.toUpperCase()}</h3>
+        <p>Holdings: ${h.amount}</p>
+        <p>Value: $${value.toFixed(2)}</p>
+      </div>
+    `;
+  });
+
+  document.getElementById("totalValue").textContent =
+    `Total Portfolio Value: $${totalValue.toFixed(2)}`;
+}
+<h2>📊 Portfolio</h2>
+<div id="portfolio"></div>
+<h3 id="totalValue"></h3>
+function buildInsightData(holdings, prices) {
+  return holdings.map(h => ({
+    coin: h.coin,
+    value: prices[h.coin].usd * h.amount,
+    change24h: prices[h.coin].usd_24h_change
+  }));
+}
+function generateInsights(data) {
+  const total = data.reduce((sum, d) => sum + d.value, 0);
+
+  const insights = [];
+
+  data.forEach(d => {
+    const percent = ((d.value / total) * 100).toFixed(1);
+
+    if (percent > 50) {
+      insights.push(
+        `${d.coin.toUpperCase()} makes up ${percent}% of your portfolio, meaning your value is highly influenced by this asset.`
+      );
+    }
+
+    if (Math.abs(d.change24h) > 8) {
+      insights.push(
+        `${d.coin.toUpperCase()} showed high volatility today (${d.change24h.toFixed(2)}%).`
+      );
+    }
+  });
+
+  if (insights.length === 0) {
+    insights.push("Your portfolio is relatively balanced with no extreme movements today.");
+  }
+
+  displayInsights(insights);
+}
+function displayInsights(insights) {
+  const container = document.getElementById("insights");
+  container.innerHTML = "";
+
+  insights.forEach(text => {
+    container.innerHTML += `<p>🤖 ${text}</p>`;
+  });
+}
+const insightData = buildInsightData(holdings, prices);
+generateInsights(insightData);
+<h2>🤖 AI Insights</h2>
+<div id="insights"></div>
+function buildDailySummaryData(holdings, prices) {
+  let totalValue = 0;
+  let topCoin = null;
+  let best = null;
+  let worst = null;
+  let volatilityCount = 0;
+
+  holdings.forEach(h => {
+    const price = prices[h.coin].usd;
+    const change = prices[h.coin].usd_24h_change;
+    const value = price * h.amount;
+    totalValue += value;
+
+    if (!topCoin || value > topCoin.value) {
+      topCoin = { coin: h.coin, value };
+    }
+
+    if (!best || change > best.change) {
+      best = { coin: h.coin, change };
+    }
+
+    if (!worst || change < worst.change) {
+      worst = { coin: h.coin, change };
+    }
+
+    if (Math.abs(change) > 7) volatilityCount++;
+  });
+
+  return {
+    totalValue,
+    topCoin,
+    best,
+    worst,
+    volatilityLevel:
+      volatilityCount === 0 ? "low" :
+      volatilityCount <= 2 ? "moderate" : "high"
+  };
+}
+function generateDailySummary(data) {
+  const { totalValue, topCoin, best, worst, volatilityLevel } = data;
+
+  let summary = `📊 Daily Crypto Summary\n\n`;
+
+  summary += `Your portfolio is currently valued at $${totalValue.toFixed(2)}. `;
+  summary += `${topCoin.coin.toUpperCase()} represents your largest holding today.\n\n`;
+
+  if (best.change > 0) {
+    summary += `🚀 ${best.coin.toUpperCase()} was the strongest performer, rising ${best.change.toFixed(2)}% over the past 24 hours. `;
+  }
+
+  if (worst.change < 0) {
+    summary += `${worst.coin.toUpperCase()} experienced the largest decline at ${worst.change.toFixed(2)}%.\n\n`;
+  }
+
+  summary += `📈 Market activity showed ${volatilityLevel} volatility across your tracked assets.`;
+
+  return summary;
+}
+<h2>🧠 Daily AI Report</h2>
+<div id="dailyReport"></div>
+function displayDailyReport(text) {
+  document.getElementById("dailyReport").textContent = text;
+}
+async function runDailyAIReport(holdings, prices) {
+  const lastRun = localStorage.getItem("lastAIReport");
+
+  if (!lastRun || Date.now() - lastRun > 86400000) {
+    const data = buildDailySummaryData(holdings, prices);
+    const report = generateDailySummary(data);
+
+    displayDailyReport(report);
+
+    if (Notification.permission === "granted") {
+      new Notification("🧠 Daily Crypto Report", {
+        body: report.slice(0, 200) + "..."
+      });
+    }
+
+    localStorage.setItem("lastAIReport", Date.now());
+  }
+}
+async function saveDailyReport(text) {
+  const user = auth.currentUser;
+  if (!user) return;
+
+  await db.collection("dailyReports").add({
+    userId: user.uid,
+    text,
+    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+  });
+}
 
