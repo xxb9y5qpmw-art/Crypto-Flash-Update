@@ -340,4 +340,86 @@ auth.onAuthStateChanged(user => {
   <button onclick="signup(email.value, password.value)">Sign Up</button>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>loadChart("bitcoin");
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    match /alerts/{alertId} {
+      allow read, write: if request.auth != null
+        && request.auth.uid == resource.data.userId;
+    }
+  }
+}
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+const db = firebase.firestore();
+auth.onAuthStateChanged(async user => {
+  if (!user) return;
+
+  const userRef = db.collection("users").doc(user.uid);
+  const doc = await userRef.get();
+
+  if (!doc.exists) {
+    await userRef.set({
+      email: user.email,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      plan: "free"
+    });
+  }
+
+  showApp();
+});
+async function saveAlert(coin, price) {
+  const user = auth.currentUser;
+  if (!user) return;
+
+  await db.collection("alerts").add({
+    userId: user.uid,
+    coin,
+    targetPrice: price,
+    active: true,
+    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+  });
+
+  document.getElementById("status").textContent = "Alert saved ☁️";
+}
+saveAlert(selectedCrypto, targetPrice);
+async function loadAlerts() {
+  const user = auth.currentUser;
+  if (!user) return;
+
+  const snapshot = await db
+    .collection("alerts")
+    .where("userId", "==", user.uid)
+    .where("active", "==", true)
+    .get();
+
+  snapshot.forEach(doc => {
+    const alert = doc.data();
+    console.log(alert.coin, alert.targetPrice);
+  });
+}
+async function triggerAlert(alertId) {
+  await db.collection("alerts").doc(alertId).update({
+    active: false,
+    triggeredAt: firebase.firestore.FieldValue.serverTimestamp()
+  });
+}
+users/
+  └── uid
+      ├── email
+      ├── plan
+      └── createdAt
+
+alerts/
+  └── alertId
+      ├── userId
+      ├── coin
+      ├── targetPrice
+      ├── active
+      ├── createdAt
+
 
