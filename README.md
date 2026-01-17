@@ -821,4 +821,158 @@ async function saveDailyReport(text) {
     createdAt: firebase.firestore.FieldValue.serverTimestamp()
   });
 }
+<h2>📊 Portfolio Allocation</h2>
+<canvas id="allocationChart"></canvas>
+
+<h2>📊 Watchlist Performance</h2>
+<canvas id="watchlistChart"></canvas>
+let allocationChart;
+
+function renderAllocationChart(holdings, prices) {
+  const labels = holdings.map(h => h.coin.toUpperCase());
+  const data = holdings.map(h => prices[h.coin].usd * h.amount);
+
+  if (allocationChart) allocationChart.destroy();
+
+  allocationChart = new Chart(document.getElementById("allocationChart"), {
+    type: "pie",
+    data: {
+      labels: labels,
+      datasets: [{
+        data: data,
+        backgroundColor: [
+          "#22c55e",
+          "#38bdf8",
+          "#facc15",
+          "#ef4444",
+          "#a855f7"
+        ]
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { position: "bottom" }
+      }
+    }
+  });
+}
+renderAllocationChart(holdings, prices);
+let watchlistChart;
+
+function renderWatchlistChart(coins, prices) {
+  const labels = coins.map(c => c.toUpperCase());
+  const data = coins.map(c => prices[c].usd_24h_change);
+
+  if (watchlistChart) watchlistChart.destroy();
+
+  watchlistChart = new Chart(document.getElementById("watchlistChart"), {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [{
+        label: "% Change (24h)",
+        data: data,
+        backgroundColor: data.map(d => d >= 0 ? "#22c55e" : "#ef4444")
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { display: false }
+      },
+      scales: {
+        y: { beginAtZero: true }
+      }
+    }
+  });
+}
+renderWatchlistChart(coins, prices);
+body {
+  font-family: 'Inter', sans-serif;
+  background: linear-gradient(135deg, #0f172a, #020617);
+  color: white;
+  padding: 20px;
+  margin: 0;
+}
+
+h1, h2, h3 {
+  font-weight: 600;
+  text-align: center;
+  margin-bottom: 15px;
+}
+
+.card {
+  background: #1e293b;
+  border-radius: 15px;
+  padding: 15px;
+  margin: 10px 0;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+  transition: transform 0.2s, box-shadow 0.2s;
+  cursor: pointer;
+}
+
+.card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.5);
+}
+
+button {
+  background: #22c55e;
+  color: black;
+  font-weight: bold;
+  padding: 12px 20px;
+  margin: 10px;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+button:hover {
+  background: #16a34a;
+  transform: scale(1.05);
+}
+
+input, select {
+  padding: 10px;
+  border-radius: 10px;
+  border: none;
+  margin: 5px;
+  width: 100%;
+  max-width: 250px;
+}
+#dashboard, #watchlist, #portfolio {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 15px;
+  margin-top: 20px;
+}
+
+canvas {
+  background: #0f172a;
+  border-radius: 15px;
+  padding: 10px;
+}
+<div id="nav">
+  <button onclick="showSection('dashboard')">Dashboard</button>
+  <button onclick="showSection('portfolio')">Portfolio</button>
+  <button onclick="showSection('watchlist')">Watchlist</button>
+  <button onclick="showSection('dailyReport')">Daily Report</button>
+</div>
+#nav {
+  display: flex;
+  justify-content: space-around;
+  margin-bottom: 20px;
+}
+
+#nav button {
+  flex: 1;
+  margin: 0 5px;
+}
+function showSection(sectionId) {
+  document.querySelectorAll("#dashboard, #portfolio, #watchlist, #dailyReport").forEach(el => el.style.display = "none");
+  document.getElementById(sectionId).style.display = "block";
+}
+showSection('dashboard');
 
